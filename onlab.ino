@@ -1,17 +1,29 @@
 #include <SPI.h>
 #include <MFRC522.h>
+#include <LiquidCrystal.h>
+#include <DHT.h>
 
 #define SS_PIN 5
 #define RST_PIN 0
+#define DHTPIN 32
+#define DHTTYPE DHT22
 
 MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
+
+LiquidCrystal lcd(21, 22, 4, 17, 16, 15);
+
 
 // Define authorized RFID tag
 int My_RFID_Tag[4] = {0xE3, 0xA2, 0xF2, 0x0F};
 boolean My_Card = false;
+boolean house_locked = true;
 
 void setup() { 
   Serial.begin(9600);
+  dht.begin();
+  // set up the LCD's number of columns and rows:
+  lcd.begin(16, 2);
+  lcd.print("House is locked!");
   SPI.begin(); // Init SPI bus
   rfid.PCD_Init(); // Init MFRC522 
 
@@ -20,6 +32,8 @@ void setup() {
 void loop() {
     // Assume card is authorized initially
   My_Card = true;
+
+  displayTemp();
 
     // Reset the loop if no new card present on the sensor/reader. This saves the entire process when idle.
   if ( ! rfid.PICC_IsNewCardPresent())
@@ -48,6 +62,22 @@ void loop() {
   
   // Stop encryption on PCD
   rfid.PCD_StopCrypto1();
+  delay(50);
+}
+
+void displayTemp()
+{
+  lcd.setCursor(0, 1);
+  // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
+  int h = dht.readHumidity();
+  // Read temperature as Celsius (the default)
+  float t = dht.readTemperature();
+  t = round(t * 10) / 10;
+  lcd.print("H:");
+  lcd.print(h);
+  lcd.print("% T:");
+  lcd.print(t, 1);
+  lcd.print("C");
 }
 
 // Function to display the RFID card's unique ID on LCD and Serial monitor
@@ -76,15 +106,25 @@ void checkCardAuthorization()
 // Function to grant access if the card is authorized
 void grantAccess()
 {
-  Serial.println("\nWelcome To Your Room");
+  Serial.println("\nRFID accepted");
+  lcd.clear();
+  lcd.print("Welcome home!");
+  house_locked = false;
   delay(2000);
+  house_locked = true;
+  lcd.clear();
+  lcd.print("House is locked!");
 }
 
 // Function to deny access if the card is unauthorized
 void denyAccess()
 {
-  Serial.println("\nGet Out of Here !");
+  Serial.println("\nRFID declined");
+  lcd.clear();
+  lcd.print("Access denied!");
   delay(1000);
+  lcd.clear();
+  lcd.print("House is locked!");
 }
 
 /**
