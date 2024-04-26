@@ -7,16 +7,24 @@
 #define RST_PIN 0
 #define DHTPIN 32
 #define DHTTYPE DHT22
+#define EM_SENSOR 27
+#define BUZZER 33
+#define MOTION_S 2
 
 MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
 
 LiquidCrystal lcd(21, 22, 4, 17, 16, 15);
 
+DHT dht(DHTPIN, DHTTYPE);
 
 // Define authorized RFID tag
 int My_RFID_Tag[4] = {0xE3, 0xA2, 0xF2, 0x0F};
 boolean My_Card = false;
 boolean house_locked = true;
+int door_locked; 
+
+int pinStateCurrent   = LOW;  // current state of pin
+int pinStatePrevious  = LOW;  // previous state of pin
 
 void setup() { 
   Serial.begin(9600);
@@ -26,6 +34,9 @@ void setup() {
   lcd.print("House is locked!");
   SPI.begin(); // Init SPI bus
   rfid.PCD_Init(); // Init MFRC522 
+  pinMode(EM_SENSOR, INPUT_PULLUP);
+  pinMode(BUZZER, OUTPUT);
+  pinMode(MOTION_S, INPUT);
 
 }
 
@@ -34,6 +45,10 @@ void loop() {
   My_Card = true;
 
   displayTemp();
+
+  magneticSensor();
+
+  motionDetection();
 
     // Reset the loop if no new card present on the sensor/reader. This saves the entire process when idle.
   if ( ! rfid.PICC_IsNewCardPresent())
@@ -63,6 +78,40 @@ void loop() {
   // Stop encryption on PCD
   rfid.PCD_StopCrypto1();
   delay(50);
+}
+
+void magneticSensor() {
+  door_locked = digitalRead(EM_SENSOR);
+
+  if(door_locked == HIGH && house_locked) {
+    lcd.clear();
+    lcd.print("ALARM ON");
+    digitalWrite(BUZZER, HIGH);
+    delay(1000);
+    lcd.clear();
+    lcd.print("ALARM WAS ON");
+  } else {
+    digitalWrite(BUZZER, LOW);
+  }
+}
+
+void motionDetection() {
+  pinStatePrevious = pinStateCurrent; // store old state
+  pinStateCurrent = digitalRead(MOTION_S);   // read new state
+
+  if (pinStateCurrent == HIGH && house_locked) {   // pin state change: LOW -> HIGH
+    Serial.println("Motion detected!");
+    lcd.clear();
+    lcd.print("ALARM ON");
+    digitalWrite(BUZZER, HIGH);
+    delay(1000);
+    lcd.clear();
+    lcd.print("ALARM WAS ON");
+  }
+  else
+  if (pinStateCurrent == LOW) {   // pin state change: HIGH -> LOW
+    digitalWrite(BUZZER, LOW);
+  }
 }
 
 void displayTemp()
@@ -106,14 +155,19 @@ void checkCardAuthorization()
 // Function to grant access if the card is authorized
 void grantAccess()
 {
-  Serial.println("\nRFID accepted");
-  lcd.clear();
-  lcd.print("Welcome home!");
-  house_locked = false;
-  delay(2000);
-  house_locked = true;
-  lcd.clear();
-  lcd.print("House is locked!");
+  if(house_locked) {
+    Serial.println("\nRFID accepted");
+    lcd.clear();
+    lcd.print("Welcome home!");
+    digitalWrite(BUZZER, LOW);
+    house_locked = false;
+    delay(2000);
+  } else {
+    house_locked = true;
+    lcd.clear();
+    lcd.print("House is locked!");
+  }
+
 }
 
 // Function to deny access if the card is unauthorized
