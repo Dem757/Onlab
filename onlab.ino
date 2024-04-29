@@ -5,23 +5,31 @@
 
 #define SS_PIN 5
 #define RST_PIN 0
-#define DHTPIN 32
+#define DHT_B_PIN 32
+#define DHT_R_PIN 2
 #define DHTTYPE DHT22
 #define EM_SENSOR 27
 #define BUZZER 33
-#define MOTION_S 2
+#define MOTION_S 34
+#define B_FAN 26
+#define BUTTON 35
+
 
 MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
 
 LiquidCrystal lcd(21, 22, 4, 17, 16, 15);
 
-DHT dht(DHTPIN, DHTTYPE);
+DHT dht(DHT_B_PIN, DHTTYPE);
+DHT dht2(DHT_R_PIN, DHTTYPE);
 
 // Define authorized RFID tag
 int My_RFID_Tag[4] = {0xE3, 0xA2, 0xF2, 0x0F};
 boolean My_Card = false;
-boolean house_locked = true;
+boolean house_locked = false;
 int door_locked; 
+boolean isAlarm = false;
+boolean roomTemp = true;
+boolean bFan = false;
 
 int pinStateCurrent   = LOW;  // current state of pin
 int pinStatePrevious  = LOW;  // previous state of pin
@@ -29,6 +37,7 @@ int pinStatePrevious  = LOW;  // previous state of pin
 void setup() { 
   Serial.begin(9600);
   dht.begin();
+  dht2.begin();
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
   lcd.print("House is locked!");
@@ -37,6 +46,9 @@ void setup() {
   pinMode(EM_SENSOR, INPUT_PULLUP);
   pinMode(BUZZER, OUTPUT);
   pinMode(MOTION_S, INPUT);
+  pinMode(B_FAN, OUTPUT);
+  digitalWrite(B_FAN, LOW);
+  pinMode(BUTTON, INPUT);
 
 }
 
@@ -58,7 +70,6 @@ void loop() {
   if ( ! rfid.PICC_ReadCardSerial())
     return;
 
-
   Serial.println("Card readed");
   MFRC522::PICC_Type piccType = rfid.PICC_GetType(rfid.uid.sak);
   if (piccType == MFRC522::PICC_TYPE_MIFARE_MINI ||  
@@ -70,63 +81,80 @@ void loop() {
     checkCardAuthorization();  // Check if the card is authorized
   }
 
-
-    // Halt PICC
+  // Halt PICC
   rfid.PICC_HaltA();
 
-  
   // Stop encryption on PCD
   rfid.PCD_StopCrypto1();
-  delay(50);
+  delay(1000);
 }
 
 void magneticSensor() {
-  door_locked = digitalRead(EM_SENSOR);
+  if (isAlarm == false && house_locked) {
+    door_locked = digitalRead(EM_SENSOR);
 
-  if(door_locked == HIGH && house_locked) {
-    lcd.clear();
-    lcd.print("ALARM ON");
-    digitalWrite(BUZZER, HIGH);
-    delay(1000);
-    lcd.clear();
-    lcd.print("ALARM WAS ON");
-  } else {
-    digitalWrite(BUZZER, LOW);
+    if(door_locked == HIGH) {
+      securityAlarm();
+    }
   }
 }
 
 void motionDetection() {
-  pinStatePrevious = pinStateCurrent; // store old state
-  pinStateCurrent = digitalRead(MOTION_S);   // read new state
+  if (isAlarm == false && house_locked) {
+    pinStatePrevious = pinStateCurrent; // store old state
+    pinStateCurrent = digitalRead(MOTION_S);   // read new state
+    if (pinStateCurrent == HIGH) {   // pin state change: LOW -> HIGH
+      securityAlarm();
+    }
+  }
+}
 
-  if (pinStateCurrent == HIGH && house_locked) {   // pin state change: LOW -> HIGH
-    Serial.println("Motion detected!");
-    lcd.clear();
-    lcd.print("ALARM ON");
-    digitalWrite(BUZZER, HIGH);
-    delay(1000);
-    lcd.clear();
-    lcd.print("ALARM WAS ON");
-  }
-  else
-  if (pinStateCurrent == LOW) {   // pin state change: HIGH -> LOW
-    digitalWrite(BUZZER, LOW);
-  }
+void securityAlarm() {
+  isAlarm = true;
+  lcd.clear();
+  lcd.print("ALARM ON");
+  digitalWrite(BUZZER, HIGH);
 }
 
 void displayTemp()
 {
+  if (digitalRead(BUTTON) == HIGH) {
+    roomTemp = !roomTemp;
+    delay(500);
+  }
   lcd.setCursor(0, 1);
   // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
-  int h = dht.readHumidity();
+  int bH = dht.readHumidity();
   // Read temperature as Celsius (the default)
-  float t = dht.readTemperature();
-  t = round(t * 10) / 10;
-  lcd.print("H:");
-  lcd.print(h);
-  lcd.print("% T:");
-  lcd.print(t, 1);
-  lcd.print("C");
+  float bT = dht.readTemperature();
+  bT = round(bT * 10) / 10;
+  int rH = dht2.readHumidity();
+  float rT = dht2.readTemperature();
+  rT = round(rT * 10) / 10;
+  if (bH >= 70 && !bFan) {
+    bFan = true;
+    digitalWrite(B_FAN, HIGH);
+    delay(500);
+  }
+  else
+  if (bH < 70 && bFan) {
+    bFan = false;
+    digitalWrite(B_FAN, LOW);
+    delay(500);
+  }
+  if (roomTemp) {
+    lcd.print("R: H:");
+    lcd.print(rH);
+    lcd.print("% T:");
+    lcd.print(rT, 1);
+    lcd.print("C");
+  } else {
+    lcd.print("B: H:");
+    lcd.print(bH);
+    lcd.print("% T:");
+    lcd.print(bT, 1);
+    lcd.print("C");
+  }
 }
 
 // Function to display the RFID card's unique ID on LCD and Serial monitor
@@ -159,6 +187,7 @@ void grantAccess()
     Serial.println("\nRFID accepted");
     lcd.clear();
     lcd.print("Welcome home!");
+    isAlarm = false;
     digitalWrite(BUZZER, LOW);
     house_locked = false;
     delay(2000);
