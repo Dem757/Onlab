@@ -8,7 +8,7 @@
 #define DHT_B_PIN 32
 #define DHT_R_PIN 2
 #define DHTTYPE DHT22
-#define EM_SENSOR 27
+#define EM_SENSOR 39
 #define BUZZER 33
 #define MOTION_S 34
 #define B_FAN 26
@@ -30,9 +30,9 @@ int door_locked;
 boolean isAlarm = false;
 boolean roomTemp = true;
 boolean bFan = false;
+int unlockTry = 0;
 
 int pinStateCurrent   = LOW;  // current state of pin
-int pinStatePrevious  = LOW;  // previous state of pin
 
 void setup() { 
   Serial.begin(9600);
@@ -40,7 +40,7 @@ void setup() {
   dht2.begin();
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
-  lcd.print("House is locked!");
+  lcd.print("Welcome home!");
   SPI.begin(); // Init SPI bus
   rfid.PCD_Init(); // Init MFRC522 
   pinMode(EM_SENSOR, INPUT_PULLUP);
@@ -53,16 +53,20 @@ void setup() {
 }
 
 void loop() {
-    // Assume card is authorized initially
-  My_Card = true;
 
   displayTemp();
 
-  magneticSensor();
+  securityLock();
 
-  motionDetection();
+  readingRFID();
 
-    // Reset the loop if no new card present on the sensor/reader. This saves the entire process when idle.
+  delay(500);
+}
+
+void readingRFID() {
+  My_Card = true;
+
+  // Reset the loop if no new card present on the sensor/reader. This saves the entire process when idle.
   if ( ! rfid.PICC_IsNewCardPresent())
     return;
 
@@ -86,7 +90,6 @@ void loop() {
 
   // Stop encryption on PCD
   rfid.PCD_StopCrypto1();
-  delay(1000);
 }
 
 void magneticSensor() {
@@ -101,9 +104,27 @@ void magneticSensor() {
 
 void motionDetection() {
   if (isAlarm == false && house_locked) {
-    pinStatePrevious = pinStateCurrent; // store old state
     pinStateCurrent = digitalRead(MOTION_S);   // read new state
     if (pinStateCurrent == HIGH) {   // pin state change: LOW -> HIGH
+      securityAlarm();
+    }
+  }
+}
+
+void securityLock() {
+  if (!isAlarm && house_locked) {
+    pinStateCurrent = digitalRead(MOTION_S);   // read new state
+    door_locked = digitalRead(EM_SENSOR);
+    if (pinStateCurrent == HIGH) {
+      securityAlarm();
+    }
+    if (door_locked == HIGH && unlockTry <= 5) {
+      digitalWrite(BUZZER, HIGH);
+      delay(500);
+      digitalWrite(BUZZER, LOW);
+      unlockTry++;
+    }
+    if (door_locked == HIGH && unlockTry > 5) {
       securityAlarm();
     }
   }
@@ -190,8 +211,12 @@ void grantAccess()
     isAlarm = false;
     digitalWrite(BUZZER, LOW);
     house_locked = false;
+    unlockTry = 0;
     delay(2000);
   } else {
+    lcd.clear();
+    lcd.print("House is locking!");
+    delay(5000);
     house_locked = true;
     lcd.clear();
     lcd.print("House is locked!");
@@ -206,8 +231,14 @@ void denyAccess()
   lcd.clear();
   lcd.print("Access denied!");
   delay(1000);
-  lcd.clear();
-  lcd.print("House is locked!");
+  if(house_locked) {
+    lcd.clear();
+    lcd.print("House is locked!");
+  } else {
+    lcd.clear();
+    lcd.print("Welcome home!");
+  }
+
 }
 
 /**
