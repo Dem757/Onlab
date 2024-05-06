@@ -2,6 +2,10 @@
 #include <MFRC522.h>
 #include <LiquidCrystal.h>
 #include <DHT.h>
+#include <Stepper.h>
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+
 
 #define SS_PIN 5
 #define RST_PIN 0
@@ -9,15 +13,34 @@
 #define DHT_R_PIN 2
 #define DHTTYPE DHT22
 #define EM_SENSOR 39
-#define BUZZER 33
+#define BUZZER 1 // on the pwm driver
 #define MOTION_S 34
-#define B_FAN 26
+#define B_FAN 2 // on the pwm driver
 #define BUTTON 35
+#define PHOTO_R 25
+#define S_IN1 26
+#define S_IN2 33
+#define S_IN3 14
+#define S_IN4 12
+#define R_LIGHT 0 // on the pwm driver
+#define B_LIGHT 3 // on the pwm driver
+#define L_LIGHT 4 // on the pwm driver
+#define L_BUTTON 36
+#define HEAT_FAN 5 // on the pwm driver
+#define HEAT_1 6 //on the pwm driver
+#define HEAT_2 7 //on the pwm driver
+
+const int stepsPerRevolution = 3700;
+
+Stepper blinder(stepsPerRevolution, S_IN1, S_IN3, S_IN2, S_IN4);
+
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 
 MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
 
-LiquidCrystal lcd(21, 22, 4, 17, 16, 15);
+LiquidCrystal lcd(27, 13, 4, 17, 16, 15);
+
 
 DHT dht(DHT_B_PIN, DHTTYPE);
 DHT dht2(DHT_R_PIN, DHTTYPE);
@@ -31,10 +54,17 @@ boolean isAlarm = false;
 boolean roomTemp = true;
 boolean bFan = false;
 int unlockTry = 0;
+boolean blinderUp = false;
+int blinderTime = 0;
+boolean lightState = false;
 
 int pinStateCurrent   = LOW;  // current state of pin
 
+boolean tempCState = false;
+int coolingTime = 0;
+
 void setup() { 
+  Wire.begin();
   Serial.begin(9600);
   dht.begin();
   dht2.begin();
@@ -44,23 +74,69 @@ void setup() {
   SPI.begin(); // Init SPI bus
   rfid.PCD_Init(); // Init MFRC522 
   pinMode(EM_SENSOR, INPUT_PULLUP);
-  pinMode(BUZZER, OUTPUT);
   pinMode(MOTION_S, INPUT);
-  pinMode(B_FAN, OUTPUT);
-  digitalWrite(B_FAN, LOW);
   pinMode(BUTTON, INPUT);
-
+  pinMode(PHOTO_R, INPUT);
+  pinMode(L_BUTTON, INPUT);
+  blinder.setSpeed(5);
+  pwm.begin();
+  pwm.setPWMFreq(1600);  // This is the maximum PWM frequency
+  pwm.setPWM(B_FAN, 0, 4096);
+  pwm.setPWM(HEAT_FAN, 0, 4096);
+  pwm.setPWM(HEAT_1, 0, 4096);
+  pwm.setPWM(HEAT_2, 0, 4096);
 }
 
 void loop() {
 
   displayTemp();
 
+  lightBasedActions();
+
   securityLock();
+
+  lightManual();
 
   readingRFID();
 
   delay(500);
+}
+
+void lightManual() {
+  if (digitalRead(L_BUTTON) == HIGH) {
+    lightState = !lightState;
+    lightSwitching();
+  }
+}
+
+void lightBasedActions() {
+  int lightVal = analogRead(PHOTO_R);
+  if (lightVal > 800 && !blinderUp && blinderTime > 20) {
+    blinder.step(stepsPerRevolution);
+    blinderUp = true;
+    lightState = false;
+    lightSwitching();
+    blinderTime = 0;
+  } else if (lightVal < 800 && blinderUp && blinderTime > 20) {
+    blinder.step(-stepsPerRevolution);
+    blinderUp = false;
+    blinderTime = 0;
+    lightState = true;
+    lightSwitching();
+  }
+  blinderTime++;
+}
+
+void lightSwitching() {
+  if (lightState) {
+    pwm.setPWM(L_LIGHT, 4096, 0);
+    pwm.setPWM(B_LIGHT, 4096, 0);
+    pwm.setPWM(R_LIGHT, 4096, 0);
+  } else {
+    pwm.setPWM(L_LIGHT, 0, 4096);
+    pwm.setPWM(B_LIGHT, 0, 4096);
+    pwm.setPWM(R_LIGHT, 0, 4096);
+  }
 }
 
 void readingRFID() {
@@ -119,9 +195,9 @@ void securityLock() {
       securityAlarm();
     }
     if (door_locked == HIGH && unlockTry <= 5) {
-      digitalWrite(BUZZER, HIGH);
+      pwm.setPWM(BUZZER, 4096, 0);
       delay(500);
-      digitalWrite(BUZZER, LOW);
+      pwm.setPWM(BUZZER, 0, 4096);
       unlockTry++;
     }
     if (door_locked == HIGH && unlockTry > 5) {
@@ -134,7 +210,7 @@ void securityAlarm() {
   isAlarm = true;
   lcd.clear();
   lcd.print("ALARM ON");
-  digitalWrite(BUZZER, HIGH);
+  pwm.setPWM(BUZZER, 4096, 0);
 }
 
 void displayTemp()
@@ -154,13 +230,13 @@ void displayTemp()
   rT = round(rT * 10) / 10;
   if (bH >= 70 && !bFan) {
     bFan = true;
-    digitalWrite(B_FAN, HIGH);
+    pwm.setPWM(B_FAN, 4096, 0);
     delay(500);
   }
   else
   if (bH < 70 && bFan) {
     bFan = false;
-    digitalWrite(B_FAN, LOW);
+    pwm.setPWM(B_FAN, 0, 4096);
     delay(500);
   }
   if (roomTemp) {
@@ -175,6 +251,40 @@ void displayTemp()
     lcd.print("% T:");
     lcd.print(bT, 1);
     lcd.print("C");
+  }
+  if (rT > 26 && !tempCState) {
+    tempControl(2);
+    tempCState = true;
+  } else if (rT < 19 && !tempCState) {
+    tempControl(1);
+    tempCState = true;
+  } else if (rT <=26 && rT >= 19 && tempCState) {
+    tempControl(0);
+  }
+}
+
+void tempControl(int heat) {
+  if (heat == 0) {
+    pwm.setPWM(HEAT_1, 0, 4096);
+    pwm.setPWM(HEAT_2, 0, 4096);
+    if (coolingTime > 20) {
+      pwm.setPWM(HEAT_FAN, 0, 4096);
+      tempCState = false;
+      coolingTime = 0;
+    } else {
+      coolingTime++;
+    }
+
+  } else if (heat == 1) {
+    pwm.setPWM(HEAT_FAN, 4096, 0);
+    delay(1000);
+    pwm.setPWM(HEAT_1, 4096, 0);
+    pwm.setPWM(HEAT_2, 0, 4096);
+  } else if(heat == 2) {
+    pwm.setPWM(HEAT_FAN, 4096, 0);
+    delay(1000);
+    pwm.setPWM(HEAT_1, 0, 4096);
+    pwm.setPWM(HEAT_2, 4096, 0);
   }
 }
 
@@ -209,7 +319,7 @@ void grantAccess()
     lcd.clear();
     lcd.print("Welcome home!");
     isAlarm = false;
-    digitalWrite(BUZZER, LOW);
+    pwm.setPWM(BUZZER, 0, 4096);
     house_locked = false;
     unlockTry = 0;
     delay(2000);
