@@ -252,13 +252,13 @@ void displayTemp()
     lcd.print(bT, 1);
     lcd.print("C");
   }
-  if (rT > 26 && !tempCState) {
+  if (rT > 28 && !tempCState) {
     tempControl(2);
     tempCState = true;
   } else if (rT < 19 && !tempCState) {
     tempControl(1);
     tempCState = true;
-  } else if (rT <=26 && rT >= 19 && tempCState) {
+  } else if (rT <=28 && rT >= 19 && tempCState) {
     tempControl(0);
   }
 }
